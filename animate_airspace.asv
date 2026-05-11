@@ -1,0 +1,196 @@
+% animate_airspace.m
+% Playback of simulation_log.csv from Python test_run.py
+%
+% IMPORTANT: Keep the block below in sync with sim_state in test_run.py (run_tests).
+% -------------------------------------------------------------------------
+% --- sim_state (mirror test_run.py) --------------------------------------
+GRID_X_MIN = 0;
+GRID_X_MAX = 80;
+GRID_Y_MIN = 0;
+GRID_Y_MAX = 80;
+
+% restricted_zone = [(30, 30), (40, 40)]  -> inclusive rectangle in Python
+RZ_X1 = 30; RZ_Y1 = 30;
+RZ_X2 = 40; RZ_Y2 = 40;
+
+% no_fly_zones = [(20, 20), (22, 22)]  -> unit cells (draw 1x1 at each corner)
+NO_FLY = [20, 20; 22, 22];
+
+% defender_pos / intruder_pos (initial — trajectories come from CSV)
+DEF0_X = 14; DEF0_Y = 14;
+INT0_X = 64; INT0_Y = 64;
+
+% Video: square axes in pixels (avoids stretched/squashed map); H.264 needs even frame size
+VIDEO_AX_SIZE = 720;   % width & height of capture region in pixels (even)
+VIDEO_FRAME_RATE = 4;
+% -------------------------------------------------------------------------
+
+close all;
+clc;
+
+logPath = 'simulation_log.csv';
+if ~isfile(logPath)
+    error('Missing %s — run Python test_run.py first (same folder as this .m file).', logPath);
+end
+
+logData = readtable(logPath);
+
+req = {'turn', 'defender_x', 'defender_y', 'intruder_x', 'intruder_y'};
+for k = 1:numel(req)
+    if ~ismember(req{k}, logData.Properties.VariableNames)
+        error('CSV must contain column "%s". Found: %s', req{k}, strjoin(logData.Properties.VariableNames, ', '));
+    end
+end
+
+n = height(logData);
+if n < 1
+    error('simulation_log.csv has no data rows (only header?). Run a full simulation.');
+end
+
+% Normalized zone bounds (handles either corner order)
+rxLo = min(RZ_X1, RZ_X2);
+rxHi = max(RZ_X1, RZ_X2);
+ryLo = min(RZ_Y1, RZ_Y2);
+ryHi = max(RZ_Y1, RZ_Y2);
+rzW = rxHi - rxLo;
+rzH = ryHi - ryLo;
+
+% Figure size MUST satisfy: figW >= margL + VIDEO_AX_SIZE + margR (axes stay inside window)
+margL = 60; margB = 50; margR = 40; margT = 90;   % top margin for title
+figW = margL + VIDEO_AX_SIZE + margR;
+figH = margB + VIDEO_AX_SIZE + margT;
+
+fig = figure('Name', 'Python AI Simulation Playback', 'Color', 'w', ...
+    'MenuBar', 'none', 'ToolBar', 'none', 'Resize', 'off', ...
+    'Units', 'pixels', 'Position', [100, 100, figW, figH], ...
+    'Visible', 'on', 'WindowStyle', 'normal');
+% macOS Retina / HiDPI: getframe(ax) often captures only the wrong quadrant unless ratio is 1
+if isprop(fig, 'DevicePixelRatio')
+    fig.DevicePixelRatio = 1;
+end
+
+% Square axes in pixel space so 80x80 airspace is not distorted in the video
+ax = axes('Parent', fig, 'Units', 'pixels', ...
+    'Position', [margL, margB, VIDEO_AX_SIZE, VIDEO_AX_SIZE]);
+hold(ax, 'on');
+grid(ax, 'on');
+box(ax, 'on');
+axis(ax, 'equal');
+axis(ax, [GRID_X_MIN GRID_X_MAX GRID_Y_MIN GRID_Y_MAX]);
+xlabel(ax, 'X');
+ylabel(ax, 'Y');
+title(ax, sprintf('Airspace (%d:%d) — sim_state from test_run.py', GRID_X_MIN, GRID_X_MAX));
+
+nfzStr = sprintf('(%d,%d)', NO_FLY(1,1), NO_FLY(1,2));
+for r = 2:size(NO_FLY, 1)
+    nfzStr = [nfzStr, sprintf(', (%d,%d)', NO_FLY(r,1), NO_FLY(r,2))]; %#ok<AGROW>
+end
+cfgStr = sprintf([ ...
+    'sim_state (test_run.py):\n' ...
+    '  defender_pos = (%d, %d)\n' ...
+    '  intruder_pos = (%d, %d)\n' ...
+    '  grid_bounds = (%d,%d,%d,%d)\n' ...
+    '  restricted_zone = [(%d,%d),(%d,%d)]\n' ...
+    '  no_fly_zones = %s' ], ...
+    DEF0_X, DEF0_Y, INT0_X, INT0_Y, ...
+    GRID_X_MIN, GRID_X_MAX, GRID_Y_MIN, GRID_Y_MAX, ...
+    RZ_X1, RZ_Y1, RZ_X2, RZ_Y2, nfzStr);
+text(ax, GRID_X_MIN + 0.5, GRID_Y_MAX - 0.5, cfgStr, 'VerticalAlignment', 'top', ...
+    'FontSize', 8, 'BackgroundColor', [0.97 0.97 1], 'EdgeColor', [0.5 0.5 0.5], ...
+    'Interpreter', 'none', 'Clipping', 'on');
+
+rectangle(ax, 'Position', [rxLo, ryLo, rzW, rzH], ...
+    'FaceColor', [1 0.85 0.85], 'EdgeColor', 'r', 'LineWidth', 2);
+text(ax, mean([rxLo, rxHi]), mean([ryLo, ryHi]), 'Restricted', ...
+    'HorizontalAlignment', 'center', 'Color', 'r', 'FontWeight', 'bold', 'FontSize', 11);
+
+for i = 1:size(NO_FLY, 1)
+    rectangle(ax, 'Position', [NO_FLY(i,1), NO_FLY(i,2), 1, 1], ...
+        'FaceColor', [0.55 0.55 0.55], 'EdgeColor', [0.3 0.3 0.3], 'LineWidth', 1);
+end
+text(ax, NO_FLY(1,1)+0.5, NO_FLY(1,2)+0.5, 'NFZ', 'HorizontalAlignment', 'center', ...
+    'FontSize', 8, 'Color', 'w', 'Clipping', 'on');
+
+defenderPlot = scatter(ax, logData.defender_x(1), logData.defender_y(1), 200, 'b', ...
+    'filled', 'MarkerEdgeColor', 'k');
+intruderPlot = scatter(ax, logData.intruder_x(1), logData.intruder_y(1), 200, 'r', ...
+    'filled', 'MarkerEdgeColor', 'k');
+% Keep legend inside axes so MATLAB does not resize the plot box (breaks fixed video crop)
+legend(ax, [defenderPlot, intruderPlot], {'Defender (MAX)', 'Intruder (MIN)'}, ...
+    'Location', 'northeast', 'FontSize', 8, 'AutoUpdate', 'off');
+
+% Video: Motion JPEG AVI is most reliable across OS/codecs; MP4 often needs valid H.264 frames.
+drawnow;
+
+videoFileName = 'Airspace_Simulation_Video.mp4';
+v = VideoWriter(videoFileName, 'MPEG-4');
+v.FrameRate = VIDEO_FRAME_RATE;
+v.Quality = 95;
+open(v);
+
+nFrames = 0;
+writeVideo(v, captureFrame(fig)); nFrames = nFrames + 1;
+
+img = captureFrame(fig);
+if ~isempty(img)
+    writeVideo(v, img); 
+    nFrames = nFrames + 1;
+end
+
+for t = 2:n
+    title(ax, sprintf('Turn %d  |  %d steps in CSV', logData.turn(t), n), 'Interpreter', 'none');
+    defenderPlot.XData = logData.defender_x(t);
+    defenderPlot.YData = logData.defender_y(t);
+    intruderPlot.XData = logData.intruder_x(t);
+    intruderPlot.YData = logData.intruder_y(t);
+    plot(ax, [logData.defender_x(t-1), logData.defender_x(t)], ...
+         [logData.defender_y(t-1), logData.defender_y(t)], 'b-', 'LineWidth', 1.5);
+    plot(ax, [logData.intruder_x(t-1), logData.intruder_x(t)], ...
+         [logData.intruder_y(t-1), logData.intruder_y(t)], 'r--', 'LineWidth', 1.5);
+    drawnow;
+    writeVideo(v, captureFrame(fig)); nFrames = nFrames + 1;
+end
+
+ix = logData.intruder_x(end);
+iy = logData.intruder_y(end);
+dx = logData.defender_x(end);
+dy = logData.defender_y(end);
+if dx == ix && dy == iy
+    title(ax, sprintf('Ended: DEFENDER WINS (%d steps)', n), 'Interpreter', 'none');
+elseif ix >= rxLo && ix <= rxHi && iy >= ryLo && iy <= ryHi
+    title(ax, 'Ended: INTRUDER WINS (in restricted zone)', 'Interpreter', 'none');
+else
+    title(ax, 'Ended: No decisive outcome', 'Interpreter', 'none');
+end
+
+drawnow;
+lastF = captureFrame(fig);
+for i = 1:5
+    writeVideo(v, lastF); nFrames = nFrames + 1;
+end
+close(v);
+disp(sprintf('Video saved: %s (%d frames)', videoFileName, nFrames));
+
+% --- local function (R2016b+ script) ---
+function img = captureFrame(figH)
+    % 1. Force a refresh of the graphics buffer
+    drawnow;
+    
+    % 2. Capture the figure as an RGB matrix
+    % Using '-r0' ensures it captures at the resolution set in the figure
+    img = print(figH, '-RGBImage', '-r0');
+    
+    % 3. Fallback: if 'print' fails to return data, use getframe
+    if isempty(img)
+        f = getframe(figH);
+        img = f.cdata;
+    end
+    
+    % 4. Video Compatibility: Dimensions must be even for MPEG-4
+    [h, w, ~] = size(img);
+    h_new = h - mod(h, 2);
+    w_new = w - mod(w, 2);
+    if h_new ~= h || w_new ~= w
+        img = img(1:h_new, 1:w_new, :);
+    end
+end
