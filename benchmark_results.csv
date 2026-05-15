@@ -1,0 +1,5 @@
+depth,minimax_value,minimax_action,minimax_time_s,alpha_beta_value,alpha_beta_action,alpha_beta_time_s,expectimax_value,expectimax_action,expectimax_time_s
+2,-inf,,0.000037,-inf,,0.000012,-inf,,0.000011
+4,-inf,,0.000037,-inf,,0.000024,-inf,,0.000021
+6,-inf,,0.000029,-inf,,0.000018,-inf,,0.000017
+8,-inf,,0.000023,-inf,,0.000017,-inf,,0.000016

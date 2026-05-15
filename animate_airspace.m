@@ -75,7 +75,10 @@ rzW = rxHi - rxLo;
 rzH = ryHi - ryLo;
 
 % Figure and axes — simple layout matching grid_bounds 0..80
-fig = figure('Name', 'Python AI Simulation Playback', 'Color', 'w', 'Position', [100, 100, 700, 700]);
+% Fixed pixel size; VideoWriter (MPEG-4) needs every frame identical. HiDPI/retina
+% and changing title text can otherwise make getframe sizes differ (e.g. 1050 vs 1048).
+fig = figure('Name', 'Python AI Simulation Playback', 'Color', 'w', ...
+    'Position', [100, 100, 700, 700], 'Units', 'pixels', 'Resize', 'off');
 axis equal;
 axis([GRID_X_MIN GRID_X_MAX GRID_Y_MIN GRID_Y_MAX]);
 grid on;
@@ -135,13 +138,15 @@ legend([defenderPlot, intruderPlot], {'Defender (MAX)', 'Intruder (MIN)'}, ...
     'Location', 'northwest', 'AutoUpdate', 'off');
 
 % --- Video (optional simple export) ---
+% All frames are resized to VID x VID (even, stable for H.264/MPEG-4 in MATLAB)
+VID = 700;
 videoFileName = 'Airspace_Simulation_Video.mp4';
 v = VideoWriter(videoFileName, 'MPEG-4');
 v.FrameRate = 2;
 v.Quality = 95;
 open(v);
 
-frame = getframeForVideo(fig);
+frame = getframeForVideo(fig, VID);
 writeVideo(v, frame);
 
 for t = 2:n
@@ -155,7 +160,7 @@ for t = 2:n
     plot([logData.intruder_x(t-1), logData.intruder_x(t)], ...
          [logData.intruder_y(t-1), logData.intruder_y(t)], 'r--', 'LineWidth', 2);
     drawnow;
-    writeVideo(v, getframeForVideo(fig));
+    writeVideo(v, getframeForVideo(fig, VID));
 end
 
 ix = logData.intruder_x(end);
@@ -171,7 +176,7 @@ else
 end
 
 drawnow;
-lastFrame = getframeForVideo(fig);
+lastFrame = getframeForVideo(fig, VID);
 for k = 1:5
     writeVideo(v, lastFrame);
 end
@@ -179,7 +184,8 @@ close(v);
 disp(['Video saved: ', videoFileName]);
 
 % --- local function ---
-function frame = getframeForVideo(figH)
+function frame = getframeForVideo(figH, vidSize)
+% vidSize: output height/width in pixels (same for every call — required by writeVideo)
     frame = getframe(figH);
     c = frame.cdata;
     if isempty(c)
@@ -188,6 +194,9 @@ function frame = getframeForVideo(figH)
     if size(c, 3) == 1
         c = repmat(c, [1 1 3]);
     end
+    % Rescale to exact size (handles Retina / fractional scaling; avoids width/height drift
+    % when the title or labels change the tight bounding box between frames)
+    c = imresizeCdataToSquare(c, vidSize);
     [h, w, ~] = size(c);
     if mod(h, 2) == 1
         c = cat(1, c, c(end, :, :));
@@ -196,4 +205,24 @@ function frame = getframeForVideo(figH)
         c = cat(2, c, c(:, end, :));
     end
     frame.cdata = c;
+end
+
+function c = imresizeCdataToSquare(c, n)
+% n x n, uint8, 3 channels — uses Image Processing Toolbox if available, else quick nearest
+    [h, w, ~] = size(c);
+    if h == n && w == n
+        return
+    end
+    if exist('imresize', 'file') == 2
+        c = imresize(c, [n, n], 'bilinear');
+        return
+    end
+    % Nearest-neighbor down/up-sample (no Image Processing Toolbox)
+    iy = (min(max(1, round( linspace(1, h, n) )), h))';  % n x 1
+    ix =  min(max(1, round( linspace(1, w, n) )), w);    % 1 x n
+    c2 = uint8(zeros(n, n, 3, 'uint8'));
+    for ch = 1:3
+        c2(:, :, ch) = c(iy, ix, ch);
+    end
+    c = c2;
 end
